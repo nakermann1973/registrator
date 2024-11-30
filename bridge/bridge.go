@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net"
+//	"net/netip"
 	"net/url"
 	"os"
 	"path"
@@ -242,11 +243,12 @@ func (b *Bridge) add(containerId string, quiet bool) {
 			continue
 		}
 		b.services[container.ID] = append(b.services[container.ID], service)
-		log.Println("added:", container.ID[:12], service.ID)
+		log.Println("added:", container.ID[:12], service.ID, service.IP)
 	}
 }
 
 func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
+	var ipFound bool = false
 	container := port.container
 	defaultName := strings.Split(path.Base(container.Config.Image), ":")[0]
 
@@ -285,6 +287,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	service.Origin = port
 	service.ID = hostname + ":" + container.Name[1:] + ":" + port.ExposedPort
 	service.Name = serviceName
+	service.Networks = container.NetworkSettings.Networks
 	if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
 	}
@@ -292,6 +295,21 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 
 	if b.config.Internal == true {
 		service.IP = port.ExposedIP
+		// Get the global config
+		net_priority := b.config.NetworksPriority
+		// Check if container has custom network priority label
+		if priority, exist := b.networksPriorityContainerRules(metadata); exist {
+			net_priority = priority
+		}
+
+		if len(net_priority) != 0 {
+			service.IP, ipFound = b.ipDefine(service, net_priority, metadata)
+		}
+
+		if !ipFound {
+			service.IP = port.ExposedIP
+		}
+
 		p, _ = strconv.Atoi(port.ExposedPort)
 	} else {
 		service.IP = port.HostIP
@@ -419,4 +437,50 @@ func init() {
 	// It's ok for Hostname to ultimately be an empty string
 	// An empty string will fall back to trying to make a best guess
 	Hostname, _ = os.Hostname()
+}
+
+// Added for define network priority (Added from Nicolas HYPOLITE patch)
+func (b *Bridge) ipDefine(service *Service, net_priority []string, metadata map[string]string) (ip string, finded bool) {
+
+	for _, netw := range net_priority {
+		//parsedNet := netip.Prefix{}
+		// var err error
+		//isIP := strings.Contains(netw, ".")
+		//if isIP {
+		//	parsedNet, err = netip.ParsePrefix(netw)
+		//	if err != nil {
+		//		log.Println(err)
+		//		continue
+		//	}
+		//}
+
+		for networkName, _ := range service.Networks {
+		//for networkName, netContainer := range service.Networks {
+			//if isIP {
+			//	ip, err := netip.ParseAddr(netContainer.IPAddress)
+			//	if err != nil {
+			//		continue
+			//	}
+
+			//	// If container IP is in current range (parsedNet), return IP
+			//	if parsedNet.Contains(ip) {
+			//		return ip.String(), true
+			//	}
+			//} else if networkName == netw {
+			if networkName == netw {
+				if netInfo, ok := service.Networks[netw]; ok {
+					return netInfo.IPAddress, true
+				}
+			}
+		}
+
+	}
+	return "", false
+}
+
+func (b *Bridge) networksPriorityContainerRules(metadata map[string]string) (networks_priority []string, configExist bool) {
+	if net, ok := metadata["networks_priority"]; ok {
+		return strings.Split(net, ","), true
+	}
+	return []string{}, false
 }

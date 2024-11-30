@@ -29,12 +29,14 @@ type Config struct {
 	RefreshInterval int
 	DeregisterCheck string
 	Cleanup         bool
+	NetworksPriority []string
 }
 
 type Service struct {
 	ID    string
 	Name  string
 	Port  int
+	Networks map[string]dockerapi.ContainerNetwork
 	IP    string
 	Tags  []string
 	Attrs map[string]string
